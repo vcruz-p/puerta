@@ -16,24 +16,12 @@
     },
     "automation": {
         "enabled": true,
-        "standing_enabled": false,
-        "standing_seconds": 4.5,
-        "face_enabled": false,
-        "gesture_enabled": false,
-        "logic": "ALL",
-        "yolo_confidence": 0.5,
-        "face_threshold": 0.48,
-        "gesture": "two_fingers",
-        "cooldown_seconds": 3.0,
-        "face_capture_count": 5,
-        "person_confidence": 0.4,
-        "person_class": 0,
-        "faces_dir": "faces",
-        "face_confidence": 0.65,
-        "gesture_confidence": 0.55,
-        "gesture_name": "MANO LEVANTADA",
-        "yolo_model": "yolo11n.pt",
-        "yolo_pose_model": "yolo11n-pose.pt",
-        "device": "auto"
+        "face_enabled": true,
+        "face_threshold": 0.5,
+        "gesture_enabled": true,
+        "gesture": "open_hand",
+        "gesture_stable_seconds": 0.30,
+        "logic": "ANY",
+        "cooldown_seconds": 8.0
     }
 }
