@@ -509,7 +509,7 @@ class App:
 
         ttk.Checkbutton(
             ap,
-            text=\"✋ Activar reconocimiento de seña\",
+            text="✋ Activar reconocimiento de seña",
             variable=self.gesture_var,
             command=self.save_auto,
             bootstyle="success"
