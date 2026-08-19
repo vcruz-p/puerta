@@ -84,20 +84,6 @@ class App:
             value=automation_cfg.get("enabled", False)
         )
 
-        self.stand_var = tk.BooleanVar(
-            value=automation_cfg.get(
-                "standing_enabled",
-                True
-            )
-        )
-
-        self.face_var = tk.BooleanVar(
-            value=automation_cfg.get(
-                "face_enabled",
-                False
-            )
-        )
-
         self.gesture_var = tk.BooleanVar(
             value=automation_cfg.get(
                 "gesture_enabled",
@@ -509,83 +495,87 @@ class App:
         )
 
         # ---------------------------------------------------------
-        # PERSONA
+        # SEÑAS CON YOLO POSE
         # ---------------------------------------------------------
-
-        ttk.Checkbutton(
-            ap,
-            text="👤 Persona frente a puerta",
-            variable=self.stand_var,
-            command=self.save_auto,
-            bootstyle="info"
-        ).pack(
-            anchor=W,
-            pady=3
-        )
 
         ttk.Label(
             ap,
-            text="Tiempo mínimo de presencia:"
+            text="👋 Reconocimiento de Señas (YOLO Pose)",
+            bootstyle="primary"
         ).pack(
-            anchor=W
+            anchor=W,
+            pady=(5, 3)
         )
 
-        self.sec = ttk.Spinbox(
+        ttk.Checkbutton(
             ap,
-            from_=0.5,
-            to=60,
-            increment=0.5
+            text=\"✋ Activar reconocimiento de seña\",
+            variable=self.gesture_var,
+            command=self.save_auto,
+            bootstyle="success"
+        ).pack(
+            anchor=W,
+            pady=2
         )
 
-        self.sec.set(
+        # Selector de gesto
+        ttk.Label(
+            ap,
+            text="Gesto para activar:"
+        ).pack(
+            anchor=W,
+            pady=(8, 2)
+        )
+
+        self.gesture_combo = ttk.Combobox(
+            ap,
+            values=[
+                "open_hand",
+                "fist", 
+                "two_fingers",
+                "victory",
+                "thumbs_up",
+                "pointing"
+            ],
+            state="readonly"
+        )
+
+        self.gesture_combo.set(
             self.cfg["automation"].get(
-                "standing_seconds",
-                4
+                "gesture",
+                "open_hand"
             )
         )
 
-        self.sec.pack(
+        self.gesture_combo.pack(
             fill=X
         )
 
-        # ---------------------------------------------------------
-        # ROSTRO
-        # ---------------------------------------------------------
-
-        ttk.Checkbutton(
+        # Tiempo de estabilidad
+        ttk.Label(
             ap,
-            text="🙂 Reconocimiento facial",
-            variable=self.face_var,
-            command=self.save_auto,
-            bootstyle="info"
+            text="Tiempo de estabilidad (segundos):"
         ).pack(
             anchor=W,
-            pady=3
+            pady=(8, 2)
         )
 
-        # ---------------------------------------------------------
-        # SEÑAS
-        # ---------------------------------------------------------
-
-        ttk.Checkbutton(
+        self.gesture_sec = ttk.Spinbox(
             ap,
-            text="✋ Reconocimiento de seña",
-            variable=self.gesture_var,
-            command=self.save_auto,
-            bootstyle="info"
-        ).pack(
-            anchor=W,
-            pady=3
+            from_=0.1,
+            to=2.0,
+            increment=0.05
         )
 
-        ttk.Button(
-            ap,
-            text="👤 REGISTRAR / GESTIONAR CARAS",
-            bootstyle="secondary",
-            command=self.face_manager
-        ).pack(
-            fill=X,
-            pady=(5, 3)
+        self.gesture_sec.set(
+            self.cfg["automation"].get(
+                "gesture_stable_seconds",
+                0.25
+            )
+        )
+
+        self.gesture_sec.pack(
+            fill=X
         )
 
         ttk.Button(
@@ -594,7 +584,8 @@ class App:
             bootstyle="primary",
             command=self.save_auto
         ).pack(
-            fill=X
+            fill=X,
+            pady=(10, 0)
         )
 
         # =========================================================
@@ -1890,6 +1881,7 @@ class App:
     # =============================================================
 
     def show_frame(self):
+        """Muestra el frame de la cámara con overlays de automatización."""
 
         if self.frame is None:
             return
@@ -1900,6 +1892,66 @@ class App:
                 self.frame.copy(),
                 cv2.COLOR_BGR2RGB
             )
+
+            # =====================================================
+            # DIBUJAR OVERLAY DE SEÑA (YOLO POSE)
+            # =====================================================
+
+            if self.engine and self.gesture_var.get():
+                status = self.engine.get_status()
+                
+                bbox = status.get("hand_bbox")
+                gesture = status.get("current_gesture")
+                confidence = status.get("gesture_confidence", 0.0)
+                detected = status.get("gesture_detected", False)
+
+                if bbox and gesture:
+                    x1, y1, x2, y2 = bbox
+                    
+                    # Color según estado
+                    if detected:
+                        color = (0, 255, 0)  # Verde: gesto confirmado
+                    else:
+                        color = (0, 165, 255)  # Naranja: detectando
+
+                    # Dibujar bounding box
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 3)
+
+                    # Texto con información del gesto
+                    label = f"{gesture}: {confidence:.2f}"
+                    
+                    # Fondo del texto
+                    text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                    cv2.rectangle(
+                        frame,
+                        (x1, y1 - text_size[1] - 10),
+                        (x1 + text_size[0], y1),
+                        color,
+                        -1
+                    )
+
+                    # Texto
+                    cv2.putText(
+                        frame,
+                        label,
+                        (x1, y1 - 5),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (255, 255, 255),
+                        2
+                    )
+
+                    # Mostrar fidelidad de la señal
+                    fidelity_label = f"Fidelidad: {confidence*100:.1f}%"
+                    cv2.putText(
+                        frame,
+                        fidelity_label,
+                        (x1, y2 + 25),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        color,
+                        2
+                    )
 
             image = Image.fromarray(
                 frame
@@ -2145,6 +2197,7 @@ class App:
     # =============================================================
 
     def save_auto(self):
+        """Guarda la configuración de automatización."""
 
         try:
 
@@ -2158,17 +2211,14 @@ class App:
                 "enabled":
                     self.auto_var.get(),
 
-                "standing_enabled":
-                    self.stand_var.get(),
-
-                "standing_seconds":
-                    float(self.sec.get()),
-
-                "face_enabled":
-                    self.face_var.get(),
-
                 "gesture_enabled":
                     self.gesture_var.get(),
+
+                "gesture":
+                    self.gesture_combo.get(),
+
+                "gesture_stable_seconds":
+                    float(self.gesture_sec.get()),
 
                 "logic":
                     self.logic_combo.get()

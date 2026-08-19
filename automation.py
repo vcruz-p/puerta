@@ -1,4 +1,6 @@
 import time
+import cv2
+import numpy as np
 
 
 class AutomationEngine:
@@ -7,31 +9,25 @@ class AutomationEngine:
 
     Señales disponibles:
 
-        ROSTRO
-            Detección facial mediante MediaPipe Face Detection.
-            Detecta presencia de rostro (sin reconocimiento de identidad).
-
-        SEÑA
-            MediaPipe Hands reconoce:
-                - open_hand
-                - fist
-                - two_fingers
-                - victory
-                - thumbs_up
+        SEÑA (YOLO Pose)
+            Usa YOLO11n-pose para detectar manos y gestos:
+                - open_hand (mano abierta)
+                - fist (puño)
+                - two_fingers (dos dedos)
+                - victory (signo V)
+                - thumbs_up (pulgar arriba)
+                - pointing (dedo índice señalando)
 
     Lógica:
-
-        ANY
-            Cualquiera de las señales habilitadas puede abrir.
-
-        ALL
-            Todas las señales habilitadas deben cumplirse.
+        - Detección de puntos clave de la mano
+        - Cálculo de geometría para identificar gestos
+        - Visualización en tiempo real con bounding box y confianza
 
     No utiliza:
-        - YOLO
         - Detección de persona
+        - Reconocimiento facial
+        - MediaPipe
         - standing_seconds
-        - face_recognition/dlib
 
     La apertura siempre se realiza mediante:
 
@@ -52,72 +48,43 @@ class AutomationEngine:
         self.log = logger or (lambda msg: None)
 
         # =========================================================
-        # ESTADO ROSTRO (MediaPipe Face Detection)
-        # =========================================================
-
-        self.face_detected = False
-
-        self.face_match_id = None
-
-        self.face_confidence = 0.0
-
-        self.face_encoding = None
-
-        self.last_face_time = 0.0
-
-        # =========================================================
         # ESTADO SEÑAS
         # =========================================================
 
         self.current_gesture = None
-
         self.last_gesture = None
-
         self.gesture_stable_since = None
-
         self.gesture_detected = False
+        self.gesture_confidence = 0.0
+        self.hand_bbox = None  # [x, y, w, h]
 
         # =========================================================
         # AUTOMATIZACIÓN
         # =========================================================
 
         self.last_trigger = 0.0
-
         self.last_trigger_source = None
 
         # =========================================================
-        # MODELOS
+        # MODELO YOLO POSE
         # =========================================================
 
-        self.mp = None
-
-        self.mp_face_detection = None
-
-        self.face_detector = None
-
-        self.mp_hands = None
-
-        self.hands = None
+        self.yolo_pose = None
+        self.model_path = None
 
         # =========================================================
         # CONTROL DE PROCESAMIENTO
         # =========================================================
 
         self.frame_counter = 0
-
-        self.last_face_process = 0.0
-
         self.last_gesture_process = 0.0
-
-        self.face_interval = 0.20
-
-        self.gesture_interval = 0.10
+        self.gesture_interval = 0.08  # Procesar cada 80ms
 
         # =========================================================
-        # CARGAR MODELOS
+        # CARGAR MODELO
         # =========================================================
 
-        self._load_models()
+        self._load_yolo_pose()
 
     # =============================================================
     # CONFIGURACIÓN
@@ -140,371 +107,244 @@ class AutomationEngine:
         return automation
 
     # =============================================================
-    # CARGAR MODELOS
+    # CARGAR YOLO POSE
     # =============================================================
 
-    def _load_models(self):
+    def _load_yolo_pose(self):
 
-        self._load_mediapipe_face()
-
-        self._load_mediapipe_hands()
-
-    # =============================================================
-    # MEDIAPIPE FACE DETECTION
-    # =============================================================
-
-    def _load_mediapipe_face(self):
-
-        self.mp = None
-
-        self.mp_face_detection = None
-
-        self.face_detector = None
+        self.yolo_pose = None
 
         try:
+            from ultralytics import YOLO
 
-            import mediapipe as mp
-
-            self.mp = mp
-
-            self.mp_face_detection = mp.solutions.face_detection
-
-            self.face_detector = self.mp_face_detection.FaceDetection(
-                model_selection=0,
-                min_detection_confidence=0.5
-            )
-
-            self.log(
-                "MediaPipe Face Detection cargado correctamente."
-            )
-
-        except Exception as exc:
-
-            self.log(
-                f"MediaPipe Face Detection no disponible: {exc}"
-            )
-
-            self.mp = None
-            self.mp_face_detection = None
-            self.face_detector = None
-
-    # =============================================================
-    # MEDIAPIPE HANDS
-    # =============================================================
-
-    def _load_mediapipe_hands(self):
-
-        self.mp_hands = None
-
-        self.hands = None
-
-        try:
-
-            import mediapipe as mp
-
-            self.mp = mp
-
-            self.mp_hands = (
-                mp.solutions.hands
-            )
-
-            self.hands = (
-                self.mp_hands.Hands(
-                    static_image_mode=False,
-                    max_num_hands=2,
-                    model_complexity=0,
-                    min_detection_confidence=0.55,
-                    min_tracking_confidence=0.55,
-                )
-            )
-
-            self.log(
-                "MediaPipe Hands cargado correctamente."
-            )
-
-        except Exception as exc:
-
-            self.log(
-                f"MediaPipe no disponible: {exc}"
-            )
-
-            self.mp = None
-            self.mp_hands = None
-            self.hands = None
-
-    # =============================================================
-    # DETECTAR ROSTRO (MediaPipe Face Detection)
-    # =============================================================
-
-    def _face_detected(self, frame):
-
-        if self.face_detector is None:
-
-            self.face_detected = False
-            self.face_match_id = None
-            self.face_confidence = 0.0
-
-            return False
-
-        if frame is None:
-
-            return False
-
-        try:
-
-            import cv2
-
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-            result = self.face_detector.process(rgb)
-
-            if not result.detections:
-
-                self.face_detected = False
-                self.face_match_id = None
-                self.face_confidence = 0.0
-
-                return False
-
-            detection = result.detections[0]
-
-            confidence = float(detection.score[0])
-
+            # Usar modelo pose por defecto o el configurado
             automation = self._automation_cfg()
-
-            threshold = float(
-                automation.get(
-                    "face_threshold",
-                    0.5,
-                )
+            self.model_path = automation.get(
+                "yolo_pose_model",
+                "yolo11n-pose.pt"
             )
 
-            if confidence >= threshold:
-
-                self.face_detected = True
-                self.face_match_id = "ROSTRO"
-                self.face_confidence = confidence
-                self.last_face_time = time.monotonic()
-
-                return True
-
-        except Exception as exc:
+            self.yolo_pose = YOLO(self.model_path)
+            self.yolo_pose.to("cpu")  # Usar CPU
 
             self.log(
-                f"Detección facial: {exc}"
+                f"YOLO Pose cargado: {self.model_path}"
             )
 
-        self.face_detected = False
-        self.face_match_id = None
-        self.face_confidence = 0.0
-
-        return False
+        except Exception as exc:
+            self.log(
+                f"YOLO Pose no disponible: {exc}"
+            )
+            self.yolo_pose = None
 
     # =============================================================
-    # RECONOCIMIENTO DE SEÑAS
+    # DETECTAR GESTO CON YOLO POSE
     # =============================================================
 
     def _gesture_detected(self, frame):
+        """
+        Detecta gestos de mano usando YOLO Pose.
+        Retorna: (detectado, nombre_gesto, confianza, bbox)
+        """
 
-        if self.hands is None:
-
-            self.gesture_detected = False
-
-            self.current_gesture = None
-
-            return False, None
-
-        if frame is None:
-
-            return False, None
+        if self.yolo_pose is None or frame is None:
+            return False, None, 0.0, None
 
         try:
-
-            import cv2
-
-            rgb = cv2.cvtColor(
+            # Ejecutar inferencia YOLO Pose
+            results = self.yolo_pose(
                 frame,
-                cv2.COLOR_BGR2RGB,
+                verbose=False,
+                conf=0.4,
+                iou=0.45
             )
 
-            result = self.hands.process(rgb)
-
-            if not result.multi_hand_landmarks:
-
+            if not results or len(results) == 0:
                 self.gesture_detected = False
-
                 self.current_gesture = None
+                self.gesture_confidence = 0.0
+                self.hand_bbox = None
+                return False, None, 0.0, None
 
-                self.gesture_stable_since = None
+            result = results[0]
+            
+            # Verificar si hay keypoints (manos)
+            if not hasattr(result, 'keypoints') or result.keypoints is None:
+                self.gesture_detected = False
+                self.current_gesture = None
+                self.gesture_confidence = 0.0
+                self.hand_bbox = None
+                return False, None, 0.0, None
 
-                return False, None
+            # Procesar cada mano detectada
+            for i in range(len(result.keypoints)):
+                kp = result.keypoints[i]
+                
+                # Obtener coordenadas de keypoints
+                if kp.xy is None or len(kp.xy[0]) < 21:
+                    continue
 
-            detected_gestures = []
+                points = kp.xy[0].cpu().numpy()  # 21 puntos de la mano
+                confidences = kp.conf[0].cpu().numpy() if hasattr(kp, 'conf') else None
+                
+                # Calcular confianza promedio de puntos clave
+                if confidences is not None:
+                    avg_conf = float(np.mean(confidences[:5]))  # Primeros 5 puntos
+                else:
+                    avg_conf = 0.8
 
-            # =====================================================
-            # ANALIZAR CADA MANO
-            # =====================================================
-
-            for hand in result.multi_hand_landmarks:
-
-                lm = hand.landmark
-
-                fingers = 0
-
-                # ---------------------------------------------
-                # ÍNDICE
-                # ---------------------------------------------
-
-                if lm[8].y < lm[6].y:
-                    fingers += 1
-
-                # ---------------------------------------------
-                # MEDIO
-                # ---------------------------------------------
-
-                if lm[12].y < lm[10].y:
-                    fingers += 1
-
-                # ---------------------------------------------
-                # ANULAR
-                # ---------------------------------------------
-
-                if lm[16].y < lm[14].y:
-                    fingers += 1
-
-                # ---------------------------------------------
-                # MEÑIQUE
-                # ---------------------------------------------
-
-                if lm[20].y < lm[18].y:
-                    fingers += 1
-
-                # ---------------------------------------------
-                # PULGAR
-                # ---------------------------------------------
-
-                thumb_extended = (
-                    abs(
-                        lm[4].x - lm[3].x
-                    ) > 0.035
-                )
-
-                # =================================================
-                # CLASIFICACIÓN
-                # =================================================
-
-                gesture = None
-
-                # MANO ABIERTA
-
-                if (
-                    fingers >= 4
-                    and thumb_extended
-                ):
-
-                    gesture = "open_hand"
-
-                # PUÑO
-
-                elif fingers == 0:
-
-                    gesture = "fist"
-
-                # DOS DEDOS
-
-                elif fingers == 2:
-
-                    gesture = "two_fingers"
-
+                # Identificar gesto basado en geometría de puntos
+                gesture, confidence = self._classify_gesture(points, avg_conf)
+                
                 if gesture:
+                    # Calcular bounding box alrededor de la mano
+                    x_min = np.min(points[:, 0])
+                    y_min = np.min(points[:, 1])
+                    x_max = np.max(points[:, 0])
+                    y_max = np.max(points[:, 1])
+                    
+                    padding = 20
+                    bbox = [
+                        max(0, int(x_min - padding)),
+                        max(0, int(y_min - padding)),
+                        min(frame.shape[1], int(x_max + padding)),
+                        min(frame.shape[0], int(y_max + padding))
+                    ]
 
-                    detected_gestures.append(
-                        gesture
+                    now = time.monotonic()
+
+                    # Verificar cambio de gesto
+                    if self.current_gesture != gesture:
+                        self.current_gesture = gesture
+                        self.gesture_stable_since = now
+                        self.gesture_detected = False
+                        self.gesture_confidence = confidence
+                        self.hand_bbox = bbox
+                        return False, gesture, confidence, bbox
+
+                    # Iniciar temporizador si es nuevo
+                    if self.gesture_stable_since is None:
+                        self.gesture_stable_since = now
+                        self.gesture_detected = False
+                        self.gesture_confidence = confidence
+                        self.hand_bbox = bbox
+                        return False, gesture, confidence, bbox
+
+                    # Verificar estabilidad temporal
+                    stable_seconds = float(
+                        self._automation_cfg().get(
+                            "gesture_stable_seconds",
+                            0.25
+                        )
                     )
 
-            # =====================================================
-            # SIN SEÑA
-            # =====================================================
+                    elapsed = now - self.gesture_stable_since
 
-            if not detected_gestures:
+                    if elapsed >= stable_seconds:
+                        self.last_gesture = gesture
+                        self.gesture_detected = True
+                        self.gesture_confidence = confidence
+                        self.hand_bbox = bbox
+                        return True, gesture, confidence, bbox
 
-                self.gesture_detected = False
-
-                self.current_gesture = None
-
-                self.gesture_stable_since = None
-
-                return False, None
-
-            # =====================================================
-            # TOMAR PRIMERA SEÑA
-            # =====================================================
-
-            gesture = detected_gestures[0]
-
-            now = time.monotonic()
-
-            # =====================================================
-            # CAMBIO DE SEÑA
-            # =====================================================
-
-            if self.current_gesture != gesture:
-
-                self.current_gesture = gesture
-
-                self.gesture_stable_since = now
-
-                self.gesture_detected = False
-
-                return False, gesture
-
-            # =====================================================
-            # INICIAR TEMPORIZADOR
-            # =====================================================
-
-            if self.gesture_stable_since is None:
-
-                self.gesture_stable_since = now
-
-                self.gesture_detected = False
-
-                return False, gesture
-
-            # =====================================================
-            # TIEMPO DE ESTABILIDAD
-            # =====================================================
-
-            stable_seconds = float(
-                self._automation_cfg().get(
-                    "gesture_stable_seconds",
-                    0.30,
-                )
-            )
-
-            elapsed = (
-                now
-                - self.gesture_stable_since
-            )
-
-            # =====================================================
-            # SEÑA CONFIRMADA
-            # =====================================================
-
-            if elapsed >= stable_seconds:
-
-                self.last_gesture = gesture
-
-                self.gesture_detected = True
-
-                return True, gesture
+            # Sin manos válidas
+            self.gesture_detected = False
+            self.current_gesture = None
+            self.gesture_confidence = 0.0
+            self.hand_bbox = None
+            return False, None, 0.0, None
 
         except Exception as exc:
+            self.log(f"Error detectando gesto YOLO: {exc}")
+            return False, None, 0.0, None
 
-            self.log(
-                f"Reconocimiento de seña: {exc}"
-            )
+    def _classify_gesture(self, points, base_confidence):
+        """
+        Clasifica el gesto basado en los 21 keypoints de la mano.
+        
+        Puntos clave (0-20):
+        0: wrist, 1-4: thumb, 5-8: index, 9-12: middle, 
+        13-16: ring, 17-20: pinky
+        
+        Retorna: (nombre_gesto, confianza)
+        """
+        
+        if len(points) < 21:
+            return None, 0.0
 
-        return False, None
+        # Extraer puntos clave
+        wrist = points[0]
+        thumb_tip = points[4]
+        index_tip = points[8]
+        index_pip = points[6]
+        index_mcp = points[5]
+        middle_tip = points[12]
+        middle_pip = points[10]
+        ring_tip = points[16]
+        ring_pip = points[14]
+        pinky_tip = points[20]
+        pinky_pip = points[18]
+
+        # Determinar qué dedos están extendidos
+        def is_finger_extended(tip, pip, mcp=None):
+            """Verifica si un dedo está extendido"""
+            if mcp is not None:
+                # Comparar con la articulación base
+                return tip[1] < pip[1] and abs(tip[0] - mcp[0]) > 0.02
+            return tip[1] < pip[1]
+
+        index_ext = is_finger_extended(index_tip, index_pip, index_mcp)
+        middle_ext = is_finger_extended(middle_tip, middle_pip)
+        ring_ext = is_finger_extended(ring_tip, ring_pip)
+        pinky_ext = is_finger_extended(pinky_tip, pinky_pip)
+
+        # Verificar pulgar (geometría diferente)
+        thumb_ext = abs(thumb_tip[0] - points[3][0]) > 0.03
+
+        extended_count = sum([index_ext, middle_ext, ring_ext, pinky_ext])
+        if thumb_ext:
+            extended_count += 0.5
+
+        # Clasificar gestos
+        gesture = None
+        confidence = base_confidence
+
+        # MANO ABIERTA (todos los dedos extendidos)
+        if extended_count >= 4.5 and thumb_ext:
+            gesture = "open_hand"
+            confidence = min(1.0, base_confidence + 0.1)
+
+        # PUÑO (ningún dedo extendido)
+        elif extended_count == 0 and not thumb_ext:
+            gesture = "fist"
+            confidence = min(1.0, base_confidence + 0.15)
+
+        # DOS DEDOS (índice y medio)
+        elif index_ext and middle_ext and not ring_ext and not pinky_ext:
+            gesture = "two_fingers"
+            confidence = min(1.0, base_confidence + 0.05)
+
+        # SIGNO V (victory) - similar a dos dedos pero más separado
+        elif index_ext and middle_ext and not ring_ext and not pinky_ext:
+            # Verificar separación entre índice y medio
+            finger_gap = abs(index_tip[0] - middle_tip[0])
+            if finger_gap > 0.05:
+                gesture = "victory"
+            else:
+                gesture = "two_fingers"
+            confidence = min(1.0, base_confidence + 0.05)
+
+        # PULGAR ARRIBA
+        elif thumb_ext and not index_ext and not middle_ext:
+            gesture = "thumbs_up"
+            confidence = min(1.0, base_confidence + 0.1)
+
+        # DEDO SEÑALANDO (solo índice)
+        elif index_ext and not middle_ext and not ring_ext and not pinky_ext:
+            gesture = "pointing"
+            confidence = min(1.0, base_confidence + 0.08)
+
+        return gesture, confidence
 
     # =============================================================
     # COOLDOWN
@@ -570,276 +410,66 @@ class AutomationEngine:
     # =============================================================
 
     def update(self, frame):
+        """
+        Actualiza el estado de la automatización.
+        Retorna: (gesture_detected, gesture_name, confidence, bbox)
+        """
 
         if frame is None:
+            return False, None, 0.0, None
 
-            return
-
-        automation = (
-            self._automation_cfg()
-        )
+        automation = self._automation_cfg()
 
         # =========================================================
         # AUTOMATIZACIÓN DESACTIVADA
         # =========================================================
 
-        if not automation.get(
-            "enabled",
-            False,
-        ):
-
-            self.face_detected = False
-            self.face_match_id = None
-            self.face_confidence = 0.0
-
+        if not automation.get("enabled", False):
             self.current_gesture = None
-
             self.gesture_stable_since = None
-
-            return
+            self.gesture_detected = False
+            self.gesture_confidence = 0.0
+            self.hand_bbox = None
+            return False, None, 0.0, None
 
         now = time.monotonic()
-
         self.frame_counter += 1
 
         # =========================================================
-        # SEÑALES
+        # DETECTAR SEÑA CON YOLO POSE
         # =========================================================
 
-        face_signal = False
-        face_name = None
-
-        gesture_signal = False
-
-        gesture_name = None
-
-        # =========================================================
-        # ROSTRO
-        # =========================================================
-
-        if automation.get(
-            "face_enabled",
-            False,
-        ):
-
-            if (
-                now
-                - self.last_face_process
-                >= self.face_interval
-            ):
-
-                self.last_face_process = now
-
-                detected = (
-                    self._face_detected(
-                        frame
-                    )
-                )
-
-                if detected:
-
-                    face_signal = True
-                    face_name = self.face_match_id
-
-                    self.log(
-                        f"ROSTRO RECONOCIDO: {face_name} "
-                        f"({self.face_confidence:.2f})"
-                    )
-
-                else:
-
-                    if self.face_detected:
-                        self.log(
-                            "ROSTRO NO RECONOCIDO"
-                        )
-
-        # =========================================================
-        # SEÑA
-        # =========================================================
-
-        if automation.get(
-            "gesture_enabled",
-            False,
-        ):
-
-            if (
-                now
-                - self.last_gesture_process
-                >= self.gesture_interval
-            ):
-
+        if automation.get("gesture_enabled", False):
+            if now - self.last_gesture_process >= self.gesture_interval:
                 self.last_gesture_process = now
+                
+                detected, gesture_name, confidence, bbox = self._gesture_detected(frame)
+                
+                if detected and gesture_name:
+                    wanted_gesture = str(automation.get("gesture", "open_hand"))
+                    
+                    if gesture_name == wanted_gesture:
+                        self.log(f"SEÑA DETECTADA: {gesture_name} ({confidence:.2f})")
+                        return True, gesture_name, confidence, bbox
 
-                (
-                    gesture_signal,
-                    gesture_name,
-                ) = self._gesture_detected(
-                    frame
-                )
-
-        # =========================================================
-        # CONSTRUIR SEÑALES
-        # =========================================================
-
-        signals = []
-
-        # ---------------------------------------------------------
-        # ROSTRO
-        # ---------------------------------------------------------
-
-        if face_signal and face_name:
-
-            signals.append(
-                f"ROSTRO:{face_name}"
-            )
-
-        # ---------------------------------------------------------
-        # SEÑA
-        # ---------------------------------------------------------
-
-        wanted_gesture = str(
-            automation.get(
-                "gesture",
-                "open_hand",
-            )
-        )
-
-        if (
-            gesture_signal
-            and gesture_name
-            and gesture_name
-            == wanted_gesture
-        ):
-
-            signals.append(
-                f"SEÑA:{gesture_name}"
-            )
-
-        # =========================================================
-        # NO HAY SEÑALES
-        # =========================================================
-
-        if not signals:
-
-            return
-
-        # =========================================================
-        # LÓGICA
-        # =========================================================
-
-        logic = str(
-            automation.get(
-                "logic",
-                "ANY",
-            )
-        ).upper()
-
-        # =========================================================
-        # ANY
-        # =========================================================
-
-        if logic == "ANY":
-
-            self._trigger(
-                " + ".join(signals)
-            )
-
-            return
-
-        # =========================================================
-        # ALL
-        # =========================================================
-
-        required = []
-
-        if automation.get(
-            "face_enabled",
-            False,
-        ):
-
-            required.append(
-                "ROSTRO"
-            )
-
-        if automation.get(
-            "gesture_enabled",
-            False,
-        ):
-
-            required.append(
-                "SEÑA"
-            )
-
-        # =========================================================
-        # SI NO HAY SEÑALES CONFIGURADAS
-        # =========================================================
-
-        if not required:
-
-            return
-
-        # =========================================================
-        # COMPROBAR TODAS
-        # =========================================================
-
-        for requirement in required:
-
-            found = any(
-                signal.startswith(
-                    requirement
-                )
-                for signal in signals
-            )
-
-            if not found:
-
-                return
-
-        # =========================================================
-        # APERTURA
-        # =========================================================
-
-        self._trigger(
-            " + ".join(signals)
-        )
+        return False, None, 0.0, None
 
     # =============================================================
     # ESTADO
     # =============================================================
 
     def get_status(self):
+        """Retorna el estado actual del motor de automatización."""
 
         return {
-
-            "face_detected":
-                self.face_detected,
-
-            "face_match_id":
-                self.face_match_id,
-
-            "face_confidence":
-                self.face_confidence,
-
-            "gesture":
-                self.last_gesture,
-
-            "current_gesture":
-                self.current_gesture,
-
-            "gesture_detected":
-                self.gesture_detected,
-
-            "last_trigger":
-                self.last_trigger,
-
-            "last_trigger_source":
-                self.last_trigger_source,
-
-            "face_detection_available":
-                self.face_detector is not None,
-
-            "mediapipe_hands_available":
-                self.hands is not None,
+            "gesture": self.last_gesture,
+            "current_gesture": self.current_gesture,
+            "gesture_detected": self.gesture_detected,
+            "gesture_confidence": self.gesture_confidence,
+            "hand_bbox": self.hand_bbox,
+            "last_trigger": self.last_trigger,
+            "last_trigger_source": self.last_trigger_source,
+            "yolo_pose_available": self.yolo_pose is not None,
         }
 
     # =============================================================
@@ -847,6 +477,7 @@ class AutomationEngine:
     # =============================================================
 
     def update_config(self, cfg):
+        """Actualiza la configuración y resetea estados."""
 
         self.cfg = cfg or {}
 
@@ -856,74 +487,31 @@ class AutomationEngine:
         )
 
         # =========================================================
-        # RECARGAR DETECCIÓN FACIAL
-        # =========================================================
-
-        try:
-
-            automation = (
-                self._automation_cfg()
-            )
-
-            threshold = automation.get(
-                "face_threshold",
-                0.5,
-            )
-
-            self.log(
-                f"Umbral de detección facial: {threshold}"
-            )
-
-        except Exception as exc:
-
-            self.log(
-                f"No se pudo actualizar "
-                f"detección facial: {exc}"
-            )
-
-        # =========================================================
         # RESET DE ESTADOS
         # =========================================================
 
-        self.face_detected = False
-        self.face_match_id = None
-        self.face_confidence = 0.0
-        self.face_encoding = None
-
         self.current_gesture = None
-
         self.last_gesture = None
-
         self.gesture_stable_since = None
-
         self.gesture_detected = False
+        self.gesture_confidence = 0.0
+        self.hand_bbox = None
 
     # =============================================================
     # CERRAR
     # =============================================================
 
     def close(self):
+        """Libera recursos del motor de automatización."""
 
         try:
-
-            if self.hands is not None:
-
-                self.hands.close()
-
-            if self.face_detector is not None:
-
-                self.face_detector.close()
+            if self.yolo_pose is not None:
+                # YOLO no requiere close explícito
+                pass
 
         except Exception:
-
             pass
 
-        self.hands = None
-
-        self.mp_hands = None
-
-        self.face_detector = None
-
-        self.mp_face_detection = None
+        self.yolo_pose = None
 
         self.mp = None
