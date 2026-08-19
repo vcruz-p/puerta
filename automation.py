@@ -8,8 +8,8 @@ class AutomationEngine:
     Señales disponibles:
 
         ROSTRO
-            Reconocimiento facial mediante face_recognition/dlib.
-            Compara rostros detectados con la base de datos registrada.
+            Detección facial mediante MediaPipe Face Detection.
+            Detecta presencia de rostro (sin reconocimiento de identidad).
 
         SEÑA
             MediaPipe Hands reconoce:
@@ -31,6 +31,7 @@ class AutomationEngine:
         - YOLO
         - Detección de persona
         - standing_seconds
+        - face_recognition/dlib
 
     La apertura siempre se realiza mediante:
 
@@ -51,7 +52,7 @@ class AutomationEngine:
         self.log = logger or (lambda msg: None)
 
         # =========================================================
-        # ESTADO ROSTRO
+        # ESTADO ROSTRO (MediaPipe Face Detection)
         # =========================================================
 
         self.face_detected = False
@@ -88,11 +89,11 @@ class AutomationEngine:
         # MODELOS
         # =========================================================
 
-        self.face_model = None
-
-        self.known_faces = {}
-
         self.mp = None
+
+        self.mp_face_detection = None
+
+        self.face_detector = None
 
         self.mp_hands = None
 
@@ -144,86 +145,54 @@ class AutomationEngine:
 
     def _load_models(self):
 
-        self._load_face_recognition()
+        self._load_mediapipe_face()
 
-        self._load_mediapipe()
+        self._load_mediapipe_hands()
 
     # =============================================================
-    # FACE RECOGNITION
+    # MEDIAPIPE FACE DETECTION
     # =============================================================
 
-    def _load_face_recognition(self):
+    def _load_mediapipe_face(self):
 
-        self.face_model = None
+        self.mp = None
 
-        self.known_faces = {}
+        self.mp_face_detection = None
+
+        self.face_detector = None
 
         try:
 
-            import face_recognition
+            import mediapipe as mp
 
-            self.face_model = face_recognition
+            self.mp = mp
 
-            automation = self._automation_cfg()
+            self.mp_face_detection = mp.solutions.face_detection
 
-            faces_db = automation.get(
-                "faces_db",
-                "faces_db"
+            self.face_detector = self.mp_face_detection.FaceDetection(
+                model_selection=0,
+                min_detection_confidence=0.5
             )
 
             self.log(
-                f"Cargando base de datos facial: {faces_db}"
-            )
-
-            self._load_known_faces(faces_db)
-
-            self.log(
-                "Reconocimiento facial cargado correctamente."
+                "MediaPipe Face Detection cargado correctamente."
             )
 
         except Exception as exc:
 
-            self.face_model = None
-
             self.log(
-                f"Face recognition no disponible: {exc}"
+                f"MediaPipe Face Detection no disponible: {exc}"
             )
 
-    def _load_known_faces(self, db_path):
-
-        import os
-        import pickle
-
-        if not self.face_model:
-            return
-
-        db_file = os.path.join(db_path, "known_faces.pkl")
-
-        if not os.path.exists(db_file):
-            self.log("Base de datos facial vacía.")
-            return
-
-        try:
-
-            with open(db_file, "rb") as f:
-                self.known_faces = pickle.load(f)
-
-            self.log(
-                f"{len(self.known_faces)} rostros cargados."
-            )
-
-        except Exception as exc:
-
-            self.log(f"Error cargando rostros: {exc}")
-            self.known_faces = {}
+            self.mp = None
+            self.mp_face_detection = None
+            self.face_detector = None
 
     # =============================================================
     # MEDIAPIPE HANDS
     # =============================================================
 
-    def _load_mediapipe(self):
-
-        self.mp = None
+    def _load_mediapipe_hands(self):
 
         self.mp_hands = None
 
@@ -264,12 +233,12 @@ class AutomationEngine:
             self.hands = None
 
     # =============================================================
-    # DETECTAR ROSTRO
+    # DETECTAR ROSTRO (MediaPipe Face Detection)
     # =============================================================
 
     def _face_detected(self, frame):
 
-        if self.face_model is None:
+        if self.face_detector is None:
 
             self.face_detected = False
             self.face_match_id = None
@@ -283,65 +252,38 @@ class AutomationEngine:
 
         try:
 
+            import cv2
+
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            result = self.face_detector.process(rgb)
+
+            if not result.detections:
+
+                self.face_detected = False
+                self.face_match_id = None
+                self.face_confidence = 0.0
+
+                return False
+
+            detection = result.detections[0]
+
+            confidence = float(detection.score[0])
+
             automation = self._automation_cfg()
 
             threshold = float(
                 automation.get(
                     "face_threshold",
-                    0.48,
+                    0.5,
                 )
             )
 
-            rgb = frame[:, :, ::-1]
-
-            face_locations = self.face_model.face_locations(rgb)
-
-            if not face_locations:
-
-                self.face_detected = False
-                self.face_match_id = None
-                self.face_confidence = 0.0
-
-                return False
-
-            face_encodings = self.face_model.face_encodings(
-                rgb,
-                face_locations
-            )
-
-            if not face_encodings:
-
-                self.face_detected = False
-                self.face_match_id = None
-                self.face_confidence = 0.0
-
-                return False
-
-            face_encoding = face_encodings[0]
-
-            best_match = None
-            best_distance = float('inf')
-
-            for name, known_encoding in self.known_faces.items():
-
-                distance = self.face_model.face_distance(
-                    [known_encoding],
-                    face_encoding
-                )[0]
-
-                if distance < best_distance:
-
-                    best_distance = distance
-                    best_match = name
-
-            confidence = 1.0 - best_distance
-
-            if confidence >= (1.0 - threshold):
+            if confidence >= threshold:
 
                 self.face_detected = True
-                self.face_match_id = best_match
+                self.face_match_id = "ROSTRO"
                 self.face_confidence = confidence
-                self.face_encoding = face_encoding
                 self.last_face_time = time.monotonic()
 
                 return True
@@ -349,7 +291,7 @@ class AutomationEngine:
         except Exception as exc:
 
             self.log(
-                f"Face recognition: {exc}"
+                f"Detección facial: {exc}"
             )
 
         self.face_detected = False
@@ -893,10 +835,10 @@ class AutomationEngine:
             "last_trigger_source":
                 self.last_trigger_source,
 
-            "face_recognition_available":
-                self.face_model is not None,
+            "face_detection_available":
+                self.face_detector is not None,
 
-            "mediapipe_available":
+            "mediapipe_hands_available":
                 self.hands is not None,
         }
 
@@ -914,7 +856,7 @@ class AutomationEngine:
         )
 
         # =========================================================
-        # RECARGAR FACE RECOGNITION
+        # RECARGAR DETECCIÓN FACIAL
         # =========================================================
 
         try:
@@ -923,23 +865,20 @@ class AutomationEngine:
                 self._automation_cfg()
             )
 
-            faces_db = automation.get(
-                "faces_db",
-                "faces_db",
+            threshold = automation.get(
+                "face_threshold",
+                0.5,
             )
 
-            self._load_known_faces(faces_db)
-
             self.log(
-                f"Base de datos facial actualizada: "
-                f"{len(self.known_faces)} rostros."
+                f"Umbral de detección facial: {threshold}"
             )
 
         except Exception as exc:
 
             self.log(
                 f"No se pudo actualizar "
-                f"face recognition: {exc}"
+                f"detección facial: {exc}"
             )
 
         # =========================================================
@@ -971,6 +910,10 @@ class AutomationEngine:
 
                 self.hands.close()
 
+            if self.face_detector is not None:
+
+                self.face_detector.close()
+
         except Exception:
 
             pass
@@ -979,8 +922,8 @@ class AutomationEngine:
 
         self.mp_hands = None
 
+        self.face_detector = None
+
+        self.mp_face_detection = None
+
         self.mp = None
-
-        self.face_model = None
-
-        self.known_faces = {}
