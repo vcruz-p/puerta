@@ -7,15 +7,17 @@ class AutomationEngine:
 
     Señales disponibles:
 
-        PERSONA
-            YOLO detecta una persona dentro de la zona configurada
-            y exige una permanencia mínima.
+        ROSTRO
+            Reconocimiento facial mediante face_recognition/dlib.
+            Compara rostros detectados con la base de datos registrada.
 
         SEÑA
             MediaPipe Hands reconoce:
                 - open_hand
                 - fist
                 - two_fingers
+                - victory
+                - thumbs_up
 
     Lógica:
 
@@ -26,9 +28,9 @@ class AutomationEngine:
             Todas las señales habilitadas deben cumplirse.
 
     No utiliza:
-        - face_recognition
-        - dlib
-        - reconocimiento facial
+        - YOLO
+        - Detección de persona
+        - standing_seconds
 
     La apertura siempre se realiza mediante:
 
@@ -49,18 +51,18 @@ class AutomationEngine:
         self.log = logger or (lambda msg: None)
 
         # =========================================================
-        # ESTADO PERSONA
+        # ESTADO ROSTRO
         # =========================================================
 
-        self.person_since = None
+        self.face_detected = False
 
-        self.person_detected = False
+        self.face_match_id = None
 
-        self.person_confidence = 0.0
+        self.face_confidence = 0.0
 
-        self.person_box = None
+        self.face_encoding = None
 
-        self.last_person_time = 0.0
+        self.last_face_time = 0.0
 
         # =========================================================
         # ESTADO SEÑAS
@@ -86,7 +88,9 @@ class AutomationEngine:
         # MODELOS
         # =========================================================
 
-        self.yolo = None
+        self.face_model = None
+
+        self.known_faces = {}
 
         self.mp = None
 
@@ -100,11 +104,11 @@ class AutomationEngine:
 
         self.frame_counter = 0
 
-        self.last_yolo_process = 0.0
+        self.last_face_process = 0.0
 
         self.last_gesture_process = 0.0
 
-        self.yolo_interval = 0.12
+        self.face_interval = 0.20
 
         self.gesture_interval = 0.10
 
@@ -140,46 +144,78 @@ class AutomationEngine:
 
     def _load_models(self):
 
-        self._load_yolo()
+        self._load_face_recognition()
 
         self._load_mediapipe()
 
     # =============================================================
-    # YOLO
+    # FACE RECOGNITION
     # =============================================================
 
-    def _load_yolo(self):
+    def _load_face_recognition(self):
 
-        self.yolo = None
+        self.face_model = None
+
+        self.known_faces = {}
 
         try:
 
-            from ultralytics import YOLO
+            import face_recognition
+
+            self.face_model = face_recognition
 
             automation = self._automation_cfg()
 
-            model_path = automation.get(
-                "yolo_model",
-                "yolo11n.pt",
+            faces_db = automation.get(
+                "faces_db",
+                "faces_db"
             )
 
             self.log(
-                f"Cargando YOLO: {model_path}"
+                f"Cargando base de datos facial: {faces_db}"
             )
 
-            self.yolo = YOLO(model_path)
+            self._load_known_faces(faces_db)
 
             self.log(
-                "YOLO cargado correctamente."
+                "Reconocimiento facial cargado correctamente."
             )
 
         except Exception as exc:
 
-            self.yolo = None
+            self.face_model = None
 
             self.log(
-                f"YOLO no disponible: {exc}"
+                f"Face recognition no disponible: {exc}"
             )
+
+    def _load_known_faces(self, db_path):
+
+        import os
+        import pickle
+
+        if not self.face_model:
+            return
+
+        db_file = os.path.join(db_path, "known_faces.pkl")
+
+        if not os.path.exists(db_file):
+            self.log("Base de datos facial vacía.")
+            return
+
+        try:
+
+            with open(db_file, "rb") as f:
+                self.known_faces = pickle.load(f)
+
+            self.log(
+                f"{len(self.known_faces)} rostros cargados."
+            )
+
+        except Exception as exc:
+
+            self.log(f"Error cargando rostros: {exc}")
+            self.known_faces = {}
 
     # =============================================================
     # MEDIAPIPE HANDS
@@ -228,16 +264,16 @@ class AutomationEngine:
             self.hands = None
 
     # =============================================================
-    # DETECTAR PERSONA
+    # DETECTAR ROSTRO
     # =============================================================
 
-    def _person_detected(self, frame):
+    def _face_detected(self, frame):
 
-        if self.yolo is None:
+        if self.face_model is None:
 
-            self.person_detected = False
-            self.person_confidence = 0.0
-            self.person_box = None
+            self.face_detected = False
+            self.face_match_id = None
+            self.face_confidence = 0.0
 
             return False
 
@@ -249,170 +285,76 @@ class AutomationEngine:
 
             automation = self._automation_cfg()
 
-            confidence = float(
+            threshold = float(
                 automation.get(
-                    "yolo_confidence",
-                    0.50,
+                    "face_threshold",
+                    0.48,
                 )
             )
 
-            results = self.yolo.predict(
-                source=frame,
-                verbose=False,
-                conf=confidence,
-                classes=[0],
-                imgsz=640,
+            rgb = frame[:, :, ::-1]
+
+            face_locations = self.face_model.face_locations(rgb)
+
+            if not face_locations:
+
+                self.face_detected = False
+                self.face_match_id = None
+                self.face_confidence = 0.0
+
+                return False
+
+            face_encodings = self.face_model.face_encodings(
+                rgb,
+                face_locations
             )
 
-            height, width = frame.shape[:2]
+            if not face_encodings:
 
-            best_confidence = 0.0
+                self.face_detected = False
+                self.face_match_id = None
+                self.face_confidence = 0.0
 
-            best_box = None
+                return False
 
-            # =====================================================
-            # ZONA DE DETECCIÓN
-            # =====================================================
+            face_encoding = face_encodings[0]
 
-            zone_x_min = float(
-                automation.get(
-                    "zone_x_min",
-                    0.15,
-                )
-            )
+            best_match = None
+            best_distance = float('inf')
 
-            zone_x_max = float(
-                automation.get(
-                    "zone_x_max",
-                    0.85,
-                )
-            )
+            for name, known_encoding in self.known_faces.items():
 
-            zone_y_min = float(
-                automation.get(
-                    "zone_y_min",
-                    0.10,
-                )
-            )
+                distance = self.face_model.face_distance(
+                    [known_encoding],
+                    face_encoding
+                )[0]
 
-            zone_y_max = float(
-                automation.get(
-                    "zone_y_max",
-                    0.95,
-                )
-            )
+                if distance < best_distance:
 
-            for result in results:
+                    best_distance = distance
+                    best_match = name
 
-                if result.boxes is None:
-                    continue
+            confidence = 1.0 - best_distance
 
-                for box in result.boxes:
+            if confidence >= (1.0 - threshold):
 
-                    try:
-
-                        cls = int(
-                            box.cls[0].item()
-                        )
-
-                        conf = float(
-                            box.conf[0].item()
-                        )
-
-                        # Clase 0 = persona
-                        if cls != 0:
-                            continue
-
-                        coords = (
-                            box.xyxy[0]
-                            .cpu()
-                            .numpy()
-                        )
-
-                        x1, y1, x2, y2 = map(
-                            int,
-                            coords,
-                        )
-
-                        # -----------------------------------------
-                        # CENTRO DEL OBJETO
-                        # -----------------------------------------
-
-                        cx = (
-                            x1 + x2
-                        ) / 2.0
-
-                        cy = (
-                            y1 + y2
-                        ) / 2.0
-
-                        normalized_x = (
-                            cx / max(width, 1)
-                        )
-
-                        normalized_y = (
-                            cy / max(height, 1)
-                        )
-
-                        # -----------------------------------------
-                        # COMPROBAR ZONA
-                        # -----------------------------------------
-
-                        inside_zone = (
-                            zone_x_min
-                            <= normalized_x
-                            <= zone_x_max
-                            and
-                            zone_y_min
-                            <= normalized_y
-                            <= zone_y_max
-                        )
-
-                        if not inside_zone:
-                            continue
-
-                        if conf > best_confidence:
-
-                            best_confidence = conf
-
-                            best_box = (
-                                x1,
-                                y1,
-                                x2,
-                                y2,
-                            )
-
-                    except Exception:
-
-                        continue
-
-            # =====================================================
-            # PERSONA ENCONTRADA
-            # =====================================================
-
-            if best_box is not None:
-
-                self.person_detected = True
-
-                self.person_confidence = (
-                    best_confidence
-                )
-
-                self.person_box = best_box
+                self.face_detected = True
+                self.face_match_id = best_match
+                self.face_confidence = confidence
+                self.face_encoding = face_encoding
+                self.last_face_time = time.monotonic()
 
                 return True
 
         except Exception as exc:
 
             self.log(
-                f"YOLO persona: {exc}"
+                f"Face recognition: {exc}"
             )
 
-        self.person_detected = False
-
-        self.person_confidence = 0.0
-
-        self.person_box = None
+        self.face_detected = False
+        self.face_match_id = None
+        self.face_confidence = 0.0
 
         return False
 
@@ -704,7 +646,9 @@ class AutomationEngine:
             False,
         ):
 
-            self.person_since = None
+            self.face_detected = False
+            self.face_match_id = None
+            self.face_confidence = 0.0
 
             self.current_gesture = None
 
@@ -720,81 +664,52 @@ class AutomationEngine:
         # SEÑALES
         # =========================================================
 
-        person_signal = False
+        face_signal = False
+        face_name = None
 
         gesture_signal = False
 
         gesture_name = None
 
         # =========================================================
-        # PERSONA
+        # ROSTRO
         # =========================================================
 
         if automation.get(
-            "standing_enabled",
-            True,
+            "face_enabled",
+            False,
         ):
 
             if (
                 now
-                - self.last_yolo_process
-                >= self.yolo_interval
+                - self.last_face_process
+                >= self.face_interval
             ):
 
-                self.last_yolo_process = now
+                self.last_face_process = now
 
                 detected = (
-                    self._person_detected(
+                    self._face_detected(
                         frame
                     )
                 )
 
                 if detected:
 
-                    if self.person_since is None:
+                    face_signal = True
+                    face_name = self.face_match_id
 
-                        self.person_since = now
-
-                        self.log(
-                            "PERSONA DETECTADA "
-                            "FRENTE A LA PUERTA"
-                        )
-
-                    self.last_person_time = now
-
-                    required_seconds = float(
-                        automation.get(
-                            "standing_seconds",
-                            4,
-                        )
+                    self.log(
+                        f"ROSTRO RECONOCIDO: {face_name} "
+                        f"({self.face_confidence:.2f})"
                     )
-
-                    elapsed = (
-                        now
-                        - self.person_since
-                    )
-
-                    if (
-                        elapsed
-                        >= required_seconds
-                    ):
-
-                        person_signal = True
 
                 else:
 
-                    if self.person_since is not None:
-
+                    if self.face_detected:
                         self.log(
-                            "PERSONA SALIÓ "
-                            "DE LA ZONA"
+                            "ROSTRO NO RECONOCIDO"
                         )
-
-                    self.person_since = None
-
-        else:
-
-            self.person_since = None
 
         # =========================================================
         # SEÑA
@@ -827,13 +742,13 @@ class AutomationEngine:
         signals = []
 
         # ---------------------------------------------------------
-        # PERSONA
+        # ROSTRO
         # ---------------------------------------------------------
 
-        if person_signal:
+        if face_signal and face_name:
 
             signals.append(
-                "PERSONA"
+                f"ROSTRO:{face_name}"
             )
 
         # ---------------------------------------------------------
@@ -896,12 +811,12 @@ class AutomationEngine:
         required = []
 
         if automation.get(
-            "standing_enabled",
-            True,
+            "face_enabled",
+            False,
         ):
 
             required.append(
-                "PERSONA"
+                "ROSTRO"
             )
 
         if automation.get(
@@ -952,28 +867,16 @@ class AutomationEngine:
 
     def get_status(self):
 
-        standing_seconds = 0.0
-
-        if self.person_since is not None:
-
-            standing_seconds = (
-                time.monotonic()
-                - self.person_since
-            )
-
         return {
 
-            "person_detected":
-                self.person_detected,
+            "face_detected":
+                self.face_detected,
 
-            "person_confidence":
-                self.person_confidence,
+            "face_match_id":
+                self.face_match_id,
 
-            "person_box":
-                self.person_box,
-
-            "standing_seconds":
-                standing_seconds,
+            "face_confidence":
+                self.face_confidence,
 
             "gesture":
                 self.last_gesture,
@@ -990,8 +893,8 @@ class AutomationEngine:
             "last_trigger_source":
                 self.last_trigger_source,
 
-            "yolo_available":
-                self.yolo is not None,
+            "face_recognition_available":
+                self.face_model is not None,
 
             "mediapipe_available":
                 self.hands is not None,
@@ -1011,7 +914,7 @@ class AutomationEngine:
         )
 
         # =========================================================
-        # RECARGAR YOLO
+        # RECARGAR FACE RECOGNITION
         # =========================================================
 
         try:
@@ -1020,40 +923,33 @@ class AutomationEngine:
                 self._automation_cfg()
             )
 
-            model_path = automation.get(
-                "yolo_model",
-                "yolo11n.pt",
+            faces_db = automation.get(
+                "faces_db",
+                "faces_db",
             )
 
-            from ultralytics import YOLO
-
-            self.yolo = YOLO(
-                model_path
-            )
+            self._load_known_faces(faces_db)
 
             self.log(
-                f"YOLO actualizado: "
-                f"{model_path}"
+                f"Base de datos facial actualizada: "
+                f"{len(self.known_faces)} rostros."
             )
 
         except Exception as exc:
 
             self.log(
                 f"No se pudo actualizar "
-                f"YOLO: {exc}"
+                f"face recognition: {exc}"
             )
 
         # =========================================================
         # RESET DE ESTADOS
         # =========================================================
 
-        self.person_since = None
-
-        self.person_detected = False
-
-        self.person_confidence = 0.0
-
-        self.person_box = None
+        self.face_detected = False
+        self.face_match_id = None
+        self.face_confidence = 0.0
+        self.face_encoding = None
 
         self.current_gesture = None
 
@@ -1085,4 +981,6 @@ class AutomationEngine:
 
         self.mp = None
 
-        self.yolo = None
+        self.face_model = None
+
+        self.known_faces = {}
