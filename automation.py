@@ -275,74 +275,92 @@ class AutomationEngine:
         # Extraer puntos clave
         wrist = points[0]
         thumb_tip = points[4]
+        thumb_ip = points[3]
         index_tip = points[8]
         index_pip = points[6]
         index_mcp = points[5]
         middle_tip = points[12]
         middle_pip = points[10]
+        middle_mcp = points[9]
         ring_tip = points[16]
         ring_pip = points[14]
         pinky_tip = points[20]
         pinky_pip = points[18]
 
-        # Determinar qué dedos están extendidos
-        def is_finger_extended(tip, pip, mcp=None):
-            """Verifica si un dedo está extendido"""
-            if mcp is not None:
-                # Comparar con la articulación base
-                return tip[1] < pip[1] and abs(tip[0] - mcp[0]) > 0.02
-            return tip[1] < pip[1]
+        # Calcular distancias para determinar dedos extendidos
+        def distance(p1, p2):
+            return np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
+        
+        def is_finger_extended(tip, pip, mcp, wrist_ref=None):
+            """Verifica si un dedo está extendido comparando con la muñeca"""
+            # El dedo está extendido si la punta está más lejos de la muñeca que el PIP
+            dist_tip_wrist = distance(tip, wrist)
+            dist_pip_wrist = distance(pip, wrist)
+            return dist_tip_wrist > dist_pip_wrist * 1.1
 
+        # Verificar cada dedo (excepto pulgar)
         index_ext = is_finger_extended(index_tip, index_pip, index_mcp)
-        middle_ext = is_finger_extended(middle_tip, middle_pip)
-        ring_ext = is_finger_extended(ring_tip, ring_pip)
-        pinky_ext = is_finger_extended(pinky_tip, pinky_pip)
+        middle_ext = is_finger_extended(middle_tip, middle_pip, middle_mcp)
+        ring_ext = is_finger_extended(ring_tip, ring_pip, ring_mcp) if 'ring_mcp' in dir() else distance(ring_tip, wrist) > distance(ring_pip, wrist) * 1.1
+        pinky_ext = is_finger_extended(pinky_tip, pinky_pip, points[17])
+        
+        # Verificar pulgar (comparar posición horizontal)
+        thumb_ext = abs(thumb_tip[0] - wrist[0]) > abs(thumb_ip[0] - wrist[0])
 
-        # Verificar pulgar (geometría diferente)
-        thumb_ext = abs(thumb_tip[0] - points[3][0]) > 0.03
-
+        # Contar dedos extendidos
         extended_count = sum([index_ext, middle_ext, ring_ext, pinky_ext])
         if thumb_ext:
-            extended_count += 0.5
+            extended_count += 1
 
-        # Clasificar gestos
+        # Clasificar gestos con prioridades claras
         gesture = None
         confidence = base_confidence
 
-        # MANO ABIERTA (todos los dedos extendidos)
-        if extended_count >= 4.5 and thumb_ext:
-            gesture = "open_hand"
-            confidence = min(1.0, base_confidence + 0.1)
-
         # PUÑO (ningún dedo extendido)
-        elif extended_count == 0 and not thumb_ext:
+        if extended_count == 0:
             gesture = "fist"
+            confidence = min(1.0, base_confidence + 0.2)
+
+        # MANO ABIERTA (todos o casi todos los dedos extendidos)
+        elif extended_count >= 5:
+            gesture = "open_hand"
             confidence = min(1.0, base_confidence + 0.15)
-
-        # DOS DEDOS (índice y medio)
-        elif index_ext and middle_ext and not ring_ext and not pinky_ext:
-            gesture = "two_fingers"
-            confidence = min(1.0, base_confidence + 0.05)
-
-        # SIGNO V (victory) - similar a dos dedos pero más separado
-        elif index_ext and middle_ext and not ring_ext and not pinky_ext:
-            # Verificar separación entre índice y medio
-            finger_gap = abs(index_tip[0] - middle_tip[0])
-            if finger_gap > 0.05:
-                gesture = "victory"
-            else:
-                gesture = "two_fingers"
-            confidence = min(1.0, base_confidence + 0.05)
-
-        # PULGAR ARRIBA
-        elif thumb_ext and not index_ext and not middle_ext:
-            gesture = "thumbs_up"
-            confidence = min(1.0, base_confidence + 0.1)
 
         # DEDO SEÑALANDO (solo índice)
         elif index_ext and not middle_ext and not ring_ext and not pinky_ext:
             gesture = "pointing"
+            confidence = min(1.0, base_confidence + 0.12)
+
+        # DOS DEDOS (índice y medio, anular y meñique cerrados)
+        elif index_ext and middle_ext and not ring_ext and not pinky_ext:
+            # Verificar separación entre índice y medio para distinguir V
+            finger_gap = abs(index_tip[0] - middle_tip[0])
+            hand_width = max(0.01, abs(np.max(points[:, 0]) - np.min(points[:, 0])))
+            
+            if finger_gap > hand_width * 0.15:  # Separación amplia = V
+                gesture = "victory"
+            else:
+                gesture = "two_fingers"
+            confidence = min(1.0, base_confidence + 0.1)
+
+        # PULGAR ARRIBA (pulgar extendido, otros cerrados)
+        elif thumb_ext and not index_ext and not middle_ext and extended_count <= 2:
+            gesture = "thumbs_up"
+            confidence = min(1.0, base_confidence + 0.15)
+
+        # TRES DEDOS (índice, medio, anular)
+        elif index_ext and middle_ext and ring_ext and not pinky_ext:
+            gesture = "three_fingers"
             confidence = min(1.0, base_confidence + 0.08)
+
+        # CUATRO DEDOS (todos menos pulgar o meñique)
+        elif extended_count == 4:
+            if not thumb_ext:
+                gesture = "four_fingers"
+                confidence = min(1.0, base_confidence + 0.08)
+            else:
+                gesture = "open_hand"
+                confidence = min(1.0, base_confidence + 0.1)
 
         return gesture, confidence
 
