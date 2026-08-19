@@ -176,76 +176,76 @@ class AutomationEngine:
                 self.hand_bbox = None
                 return False, None, 0.0, None
 
-            # Procesar cada mano detectada
-            for i in range(len(result.keypoints)):
-                kp = result.keypoints[i]
-                
-                # Obtener coordenadas de keypoints
-                if kp.xy is None or len(kp.xy[0]) < 21:
-                    continue
-
-                points = kp.xy[0].cpu().numpy()  # 21 puntos de la mano
-                confidences = kp.conf[0].cpu().numpy() if hasattr(kp, 'conf') else None
-                
-                # Calcular confianza promedio de puntos clave
-                if confidences is not None:
-                    avg_conf = float(np.mean(confidences[:5]))  # Primeros 5 puntos
-                else:
-                    avg_conf = 0.8
-
-                # Identificar gesto basado en geometría de puntos
-                gesture, confidence = self._classify_gesture(points, avg_conf)
-                
-                if gesture:
-                    # Calcular bounding box alrededor de la mano
-                    x_min = np.min(points[:, 0])
-                    y_min = np.min(points[:, 1])
-                    x_max = np.max(points[:, 0])
-                    y_max = np.max(points[:, 1])
+                # Procesar cada mano detectada
+                for i in range(len(result.keypoints)):
+                    kp = result.keypoints[i]
                     
-                    padding = 20
-                    bbox = [
-                        max(0, int(x_min - padding)),
-                        max(0, int(y_min - padding)),
-                        min(frame.shape[1], int(x_max + padding)),
-                        min(frame.shape[0], int(y_max + padding))
-                    ]
+                    # Obtener coordenadas de keypoints
+                    if kp.xy is None or len(kp.xy[0]) < 21:
+                        continue
 
-                    now = time.monotonic()
+                    points = kp.xy[0].cpu().numpy()  # 21 puntos de la mano
+                    confidences = kp.conf[0].cpu().numpy() if hasattr(kp, 'conf') else None
+                    
+                    # Calcular confianza promedio de puntos clave
+                    if confidences is not None:
+                        avg_conf = float(np.mean(confidences[:5]))  # Primeros 5 puntos
+                    else:
+                        avg_conf = 0.8
 
-                    # Verificar cambio de gesto
-                    if self.current_gesture != gesture:
-                        self.current_gesture = gesture
-                        self.gesture_stable_since = now
-                        self.gesture_detected = False
-                        self.gesture_confidence = confidence
-                        self.hand_bbox = bbox
-                        return False, gesture, confidence, bbox
+                    # Identificar gesto basado en geometría de puntos
+                    gesture, confidence = self._classify_gesture(points, avg_conf)
+                    
+                    if gesture:
+                        # Calcular bounding box alrededor de la mano [x1, y1, x2, y2]
+                        x_min = np.min(points[:, 0])
+                        y_min = np.min(points[:, 1])
+                        x_max = np.max(points[:, 0])
+                        y_max = np.max(points[:, 1])
+                        
+                        padding = 20
+                        bbox = [
+                            max(0, int(x_min - padding)),
+                            max(0, int(y_min - padding)),
+                            min(frame.shape[1], int(x_max + padding)),
+                            min(frame.shape[0], int(y_max + padding))
+                        ]
 
-                    # Iniciar temporizador si es nuevo
-                    if self.gesture_stable_since is None:
-                        self.gesture_stable_since = now
-                        self.gesture_detected = False
-                        self.gesture_confidence = confidence
-                        self.hand_bbox = bbox
-                        return False, gesture, confidence, bbox
+                        now = time.monotonic()
 
-                    # Verificar estabilidad temporal
-                    stable_seconds = float(
-                        self._automation_cfg().get(
-                            "gesture_stable_seconds",
-                            0.25
+                        # Verificar cambio de gesto
+                        if self.current_gesture != gesture:
+                            self.current_gesture = gesture
+                            self.gesture_stable_since = now
+                            self.gesture_detected = False
+                            self.gesture_confidence = confidence
+                            self.hand_bbox = bbox
+                            return False, gesture, confidence, bbox
+
+                        # Iniciar temporizador si es nuevo
+                        if self.gesture_stable_since is None:
+                            self.gesture_stable_since = now
+                            self.gesture_detected = False
+                            self.gesture_confidence = confidence
+                            self.hand_bbox = bbox
+                            return False, gesture, confidence, bbox
+
+                        # Verificar estabilidad temporal
+                        stable_seconds = float(
+                            self._automation_cfg().get(
+                                "gesture_stable_seconds",
+                                0.25
+                            )
                         )
-                    )
 
-                    elapsed = now - self.gesture_stable_since
+                        elapsed = now - self.gesture_stable_since
 
-                    if elapsed >= stable_seconds:
-                        self.last_gesture = gesture
-                        self.gesture_detected = True
-                        self.gesture_confidence = confidence
-                        self.hand_bbox = bbox
-                        return True, gesture, confidence, bbox
+                        if elapsed >= stable_seconds:
+                            self.last_gesture = gesture
+                            self.gesture_detected = True
+                            self.gesture_confidence = confidence
+                            self.hand_bbox = bbox
+                            return True, gesture, confidence, bbox
 
             # Sin manos válidas
             self.gesture_detected = False
