@@ -1,0 +1,39 @@
+{
+    "camera": {
+        "ip": "192.168.1.100",
+        "username": "root",
+        "password": "",
+        "rtsp_port": 554,
+        "rtsp_path": "/axis-media/media.amp?videocodec=h264",
+        "transport": "tcp"
+    },
+    "door": {
+        "ip": "192.168.1.101",
+        "port": 80,
+        "open_endpoint": "/open",
+        "method": "GET",
+        "timeout": 5.0
+    },
+    "automation": {
+        "enabled": true,
+        "standing_enabled": false,
+        "standing_seconds": 4.5,
+        "face_enabled": false,
+        "gesture_enabled": false,
+        "logic": "ALL",
+        "yolo_confidence": 0.5,
+        "face_threshold": 0.48,
+        "gesture": "two_fingers",
+        "cooldown_seconds": 3.0,
+        "face_capture_count": 5,
+        "person_confidence": 0.4,
+        "person_class": 0,
+        "faces_dir": "faces",
+        "face_confidence": 0.65,
+        "gesture_confidence": 0.55,
+        "gesture_name": "MANO LEVANTADA",
+        "yolo_model": "yolo11n.pt",
+        "yolo_pose_model": "yolo11n-pose.pt",
+        "device": "auto"
+    }
+}

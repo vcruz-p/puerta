@@ -1,0 +1,8 @@
+ttkbootstrap
+opencv-python
+Pillow
+requests
+numpy
+ultralytics
+face_recognition
+mediapipe
