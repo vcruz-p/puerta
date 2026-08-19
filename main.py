@@ -1897,6 +1897,8 @@ class App:
             # DIBUJAR OVERLAY DE SEÑA (YOLO POSE)
             # =====================================================
 
+            hand_detected = False
+            
             if self.engine and self.gesture_var.get():
                 status = self.engine.get_status()
                 
@@ -1907,36 +1909,54 @@ class App:
 
                 if bbox and gesture:
                     x1, y1, x2, y2 = bbox
+                    hand_detected = True
                     
-                    # Color según estado
+                    # Color según estado - más vibrante
                     if detected:
-                        color = (0, 255, 0)  # Verde: gesto confirmado
+                        color = (0, 255, 0)  # Verde brillante: gesto confirmado
+                        glow_color = (0, 200, 0)
                     else:
                         color = (0, 165, 255)  # Naranja: detectando
+                        glow_color = (0, 140, 200)
 
-                    # Dibujar bounding box
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 3)
-
-                    # Texto con información del gesto
-                    label = f"{gesture}: {confidence:.2f}"
+                    # Dibujar bounding box con líneas más gruesas
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 4)
                     
-                    # Fondo del texto
-                    text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+                    # Efecto de brillo exterior
+                    cv2.rectangle(frame, (x1-2, y1-2), (x2+2, y2+2), glow_color, 2)
+
+                    # Texto con información del gesto - más grande y visible
+                    label = f"MANO DETECTADA: {gesture.upper()}"
+                    conf_label = f"Confianza: {confidence*100:.1f}%"
+                    
+                    # Fondo del texto principal
+                    text_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 1.0, 3)[0]
                     cv2.rectangle(
                         frame,
-                        (x1, y1 - text_size[1] - 10),
-                        (x1 + text_size[0], y1),
+                        (x1, y1 - text_size[1] - 20),
+                        (x1 + text_size[0] + 20, y1),
                         color,
                         -1
                     )
 
-                    # Texto
+                    # Texto principal
                     cv2.putText(
                         frame,
                         label,
-                        (x1, y1 - 5),
+                        (x1 + 10, y1 - 10),
                         cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
+                        1.0,
+                        (255, 255, 255),
+                        3
+                    )
+                    
+                    # Texto de confianza
+                    cv2.putText(
+                        frame,
+                        conf_label,
+                        (x1 + 10, y1 + 35),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.8,
                         (255, 255, 255),
                         2
                     )
@@ -1946,34 +1966,75 @@ class App:
                     cv2.putText(
                         frame,
                         fidelity_label,
-                        (x1, y2 + 25),
+                        (x1, y2 + 30),
                         cv2.FONT_HERSHEY_SIMPLEX,
-                        0.6,
+                        0.7,
                         color,
-                        2
+                        3
                     )
+                    
+                    # Indicador de éxito cuando está detectado
+                    if detected:
+                        # Círculo verde parpadeante en la esquina
+                        center_x = frame.shape[1] - 60
+                        center_y = 60
+                        cv2.circle(frame, (center_x, center_y), 40, (0, 255, 0), -1)
+                        cv2.circle(frame, (center_x, center_y), 35, (255, 255, 255), -1)
+                        cv2.circle(frame, (center_x, center_y), 30, (0, 255, 0), -1)
+                        
+                        # Texto de éxito
+                        success_text = "¡ACCESO CONCEDIDO!"
+                        cv2.putText(
+                            frame,
+                            success_text,
+                            (center_x - 140, center_y + 5),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            (255, 255, 255),
+                            2
+                        )
 
             image = Image.fromarray(
                 frame
             )
 
-            w = max(
-                self.video.winfo_width() - 15,
+            # Obtener dimensiones del contenedor de video
+            container_w = max(
+                self.video.winfo_width() - 10,
                 400
             )
 
-            h = max(
-                self.video.winfo_height() - 15,
+            container_h = max(
+                self.video.winfo_height() - 10,
                 300
             )
 
-            image.thumbnail(
-                (
-                    w,
-                    h
-                ),
+            # Calcular escala para cubrir todo el espacio (cover mode)
+            img_w, img_h = image.size
+            scale_w = container_w / img_w
+            scale_h = container_h / img_h
+            scale = max(scale_w, scale_h)  # Usar max para cubrir todo (cover)
+
+            new_w = int(img_w * scale)
+            new_h = int(img_h * scale)
+
+            # Redimensionar imagen para cubrir el contenedor
+            image = image.resize(
+                (new_w, new_h),
                 Image.Resampling.LANCZOS
             )
+
+            # Centrar la imagen si es más grande que el contenedor
+            x_offset = (new_w - container_w) // 2 if new_w > container_w else 0
+            y_offset = (new_h - container_h) // 2 if new_h > container_h else 0
+
+            # Recortar al tamaño del contenedor si es necesario
+            if new_w > container_w or new_h > container_h:
+                left = max(0, x_offset)
+                top = max(0, y_offset)
+                right = min(new_w, left + container_w)
+                bottom = min(new_h, top + container_h)
+                image = image.crop((left, top, right, bottom))
 
             photo = ImageTk.PhotoImage(
                 image
