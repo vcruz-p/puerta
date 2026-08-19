@@ -761,16 +761,16 @@ class App:
         )
 
         win.title(
-            "Configuración del sistema"
+            "⚙ Configuración del Sistema"
         )
 
         win.geometry(
-            "760x820"
+            "850x750"
         )
 
         win.minsize(
-            650,
-            700
+            700,
+            650
         )
 
         win.transient(
@@ -785,18 +785,21 @@ class App:
 
         canvas = tk.Canvas(
             win,
-            highlightthickness=0
+            highlightthickness=0,
+            bg="#f5f5f5"
         )
 
         scroll = ttk.Scrollbar(
             win,
             orient=VERTICAL,
-            command=canvas.yview
+            command=canvas.yview,
+            bootstyle="round"
         )
 
         content = ttk.Frame(
             canvas,
-            padding=15
+            padding=20,
+            bootstyle="light"
         )
 
         content.bind(
@@ -806,10 +809,16 @@ class App:
             )
         )
 
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
         canvas_window = canvas.create_window(
             (0, 0),
             window=content,
-            anchor="nw"
+            anchor="nw",
+            width=810
         )
 
         canvas.configure(
@@ -831,17 +840,41 @@ class App:
         # HEADER
         # ---------------------------------------------------------
 
-        ttk.Label(
+        header_frame = ttk.Frame(
             content,
-            text="CONFIGURACIÓN DEL SISTEMA",
+            bootstyle="primary"
+        )
+        
+        header_frame.pack(
+            fill=X,
+            pady=(0, 20)
+        )
+
+        ttk.Label(
+            header_frame,
+            text="⚙ CONFIGURACIÓN DEL SISTEMA",
             font=(
                 "Segoe UI",
-                20,
+                22,
                 "bold"
-            )
+            ),
+            bootstyle="inverse-primary"
         ).pack(
-            anchor=W,
-            pady=(0, 12)
+            fill=X,
+            ipady=15,
+            padx=10
+        )
+
+        ttk.Label(
+            header_frame,
+            text="Cámara • Puerta • Automatización • YOLO",
+            font=(
+                "Segoe UI",
+                10
+            ),
+            bootstyle="secondary"
+        ).pack(
+            pady=(5, 0)
         )
 
         # =========================================================
@@ -850,35 +883,35 @@ class App:
 
         camera = ttk.Labelframe(
             content,
-            text=" CÁMARA AXIS Q7401 ",
+            text=" 📷 CÁMARA AXIS Q7401 ",
             bootstyle="primary",
-            padding=12
+            padding=15
         )
 
         camera.pack(
             fill=X,
-            pady=6
+            pady=(0, 15)
         )
 
         c = self.cfg["camera"]
 
         cam_ip = self.config_entry(
             camera,
-            "IP:",
+            "🌐 IP de la cámara:",
             c.get("ip", ""),
             0
         )
 
         cam_user = self.config_entry(
             camera,
-            "Usuario:",
+            "👤 Usuario:",
             c.get("username", ""),
             1
         )
 
         cam_pass = self.config_entry(
             camera,
-            "Contraseña:",
+            "🔒 Contraseña:",
             c.get("password", ""),
             2,
             True
@@ -886,14 +919,14 @@ class App:
 
         cam_port = self.config_entry(
             camera,
-            "Puerto RTSP:",
+            "🔌 Puerto RTSP:",
             c.get("rtsp_port", 554),
             3
         )
 
         cam_path = self.config_entry(
             camera,
-            "RTSP Path:",
+            "📍 RTSP Path:",
             c.get(
                 "rtsp_path",
                 "/axis-media/media.amp?videocodec=h264"
@@ -904,16 +937,16 @@ class App:
         ttk.Label(
             camera,
             text=(
-                "Ejemplo:\n"
-                "/axis-media/media.amp?videocodec=h264"
+                "💡 Ejemplo: /axis-media/media.amp?videocodec=h264"
             ),
-            bootstyle="secondary"
+            bootstyle="secondary",
+            font=("Segoe UI", 9, "italic")
         ).grid(
             row=5,
             column=0,
             columnspan=2,
             sticky=W,
-            pady=5
+            pady=(8, 0)
         )
 
         # =========================================================
@@ -922,35 +955,35 @@ class App:
 
         door = ttk.Labelframe(
             content,
-            text=" PUERTA / CONTROL HTTP ",
+            text=" 🚪 PUERTA / CONTROL HTTP ",
             bootstyle="warning",
-            padding=12
+            padding=15
         )
 
         door.pack(
             fill=X,
-            pady=6
+            pady=(0, 15)
         )
 
         d = self.cfg["door"]
 
         door_ip = self.config_entry(
             door,
-            "IP:",
+            "🌐 IP de la puerta:",
             d.get("ip", ""),
             0
         )
 
         door_port = self.config_entry(
             door,
-            "Puerto:",
+            "🔌 Puerto:",
             d.get("port", 80),
             1
         )
 
         endpoint = self.config_entry(
             door,
-            "Endpoint abrir:",
+            "📍 Endpoint abrir:",
             d.get(
                 "open_endpoint",
                 "/open"
@@ -960,7 +993,7 @@ class App:
 
         timeout = self.config_entry(
             door,
-            "Timeout:",
+            "⏱️ Timeout (segundos):",
             d.get(
                 "timeout",
                 5
@@ -970,14 +1003,15 @@ class App:
 
         ttk.Label(
             door,
-            text="La puerta no necesita usuario ni contraseña.",
-            bootstyle="secondary"
+            text="ℹ️ La puerta no necesita usuario ni contraseña.",
+            bootstyle="secondary",
+            font=("Segoe UI", 9, "italic")
         ).grid(
             row=4,
             column=0,
             columnspan=2,
             sticky=W,
-            pady=5
+            pady=(8, 0)
         )
 
         # =========================================================
@@ -986,14 +1020,14 @@ class App:
 
         auto = ttk.Labelframe(
             content,
-            text=" AUTOMATIZACIÓN Y SEÑALES ",
+            text=" ⚙ AUTOMATIZACIÓN Y SEÑALES ",
             bootstyle="info",
-            padding=12
+            padding=15
         )
 
         auto.pack(
             fill=X,
-            pady=6
+            pady=(0, 15)
         )
 
         a = self.cfg["automation"]
@@ -1002,75 +1036,104 @@ class App:
         # LÓGICA
         # ---------------------------------------------------------
 
+        logic_frame = ttk.Frame(auto)
+        logic_frame.pack(
+            fill=X,
+            pady=(0, 10)
+        )
+
         ttk.Label(
-            auto,
-            text="Lógica de activación:"
+            logic_frame,
+            text="🔀 Lógica de activación:",
+            font=("Segoe UI", 10, "bold")
         ).pack(
             anchor=W
         )
 
         logic = ttk.Combobox(
-            auto,
+            logic_frame,
             values=[
-                "ANY",
-                "ALL"
+                "ANY - Cualquiera abre",
+                "ALL - Todas requeridas"
             ],
-            state="readonly"
+            state="readonly",
+            width=30
         )
 
-        logic.set(
-            a.get(
-                "logic",
-                "ANY"
-            )
-        )
+        current_logic = a.get("logic", "ANY")
+        logic_display = "ANY - Cualquiera abre" if current_logic == "ANY" else "ALL - Todas requeridas"
+        logic.set(logic_display)
 
         logic.pack(
             fill=X,
-            pady=4
+            pady=(5, 5)
         )
 
         ttk.Label(
-            auto,
+            logic_frame,
             text=(
-                "ANY = cualquier señal válida puede abrir.\n"
-                "ALL = todas las señales activadas deben cumplirse."
+                "• ANY = cualquier señal válida puede abrir la puerta.\n"
+                "• ALL = todas las señales activadas deben cumplirse simultáneamente."
             ),
-            bootstyle="secondary"
+            bootstyle="secondary",
+            font=("Segoe UI", 9),
+            justify=LEFT
         ).pack(
-            anchor=W,
-            pady=(0, 8)
+            anchor=W
         )
 
         # ---------------------------------------------------------
         # PERSONA
         # ---------------------------------------------------------
 
-        ttk.Label(
-            auto,
-            text="👤 PERSONA FRENTE A LA PUERTA",
-            font=(
-                "Segoe UI",
-                10,
-                "bold"
-            )
-        ).pack(
-            anchor=W,
-            pady=(5, 2)
+        persona_frame = ttk.Frame(auto)
+        persona_frame.pack(
+            fill=X,
+            pady=(15, 10)
         )
 
         ttk.Label(
-            auto,
-            text="Tiempo mínimo de presencia:"
+            persona_frame,
+            text="👤 PERSONA FRENTE A LA PUERTA",
+            font=(
+                "Segoe UI",
+                11,
+                "bold"
+            ),
+            bootstyle="info"
+        ).pack(
+            anchor=W
+        )
+
+        ttk.Separator(
+            persona_frame,
+            bootstyle="light"
+        ).pack(
+            fill=X,
+            pady=3
+        )
+
+        standing_sec_frame = ttk.Frame(persona_frame)
+        standing_sec_frame.pack(
+            fill=X,
+            pady=(5, 0)
+        )
+
+        ttk.Label(
+            standing_sec_frame,
+            text="⏱️ Tiempo mínimo de presencia (segundos):",
+            font=("Segoe UI", 9)
         ).pack(
             anchor=W
         )
 
         standing = ttk.Spinbox(
-            auto,
+            standing_sec_frame,
             from_=0.5,
             to=60,
-            increment=0.5
+            increment=0.5,
+            width=10,
+            font=("Segoe UI", 10)
         )
 
         standing.set(
@@ -1081,24 +1144,57 @@ class App:
         )
 
         standing.pack(
-            fill=X,
-            pady=3
+            anchor=W,
+            pady=(3, 0)
         )
 
         # ---------------------------------------------------------
         # YOLO
         # ---------------------------------------------------------
 
+        yolo_frame = ttk.Frame(auto)
+        yolo_frame.pack(
+            fill=X,
+            pady=(15, 10)
+        )
+
         ttk.Label(
-            auto,
-            text="Confianza YOLO:"
+            yolo_frame,
+            text="🎯 DETECCIÓN YOLO",
+            font=(
+                "Segoe UI",
+                11,
+                "bold"
+            ),
+            bootstyle="primary"
         ).pack(
-            anchor=W,
-            pady=(6, 2)
+            anchor=W
+        )
+
+        ttk.Separator(
+            yolo_frame,
+            bootstyle="light"
+        ).pack(
+            fill=X,
+            pady=3
+        )
+
+        yolo_conf_frame = ttk.Frame(yolo_frame)
+        yolo_conf_frame.pack(
+            fill=X,
+            pady=(8, 5)
+        )
+
+        ttk.Label(
+            yolo_conf_frame,
+            text=f"📊 Confianza mínima:  ",
+            font=("Segoe UI", 9)
+        ).pack(
+            side=LEFT
         )
 
         yolo_conf = ttk.Scale(
-            auto,
+            yolo_conf_frame,
             from_=0.10,
             to=0.95,
             value=float(
@@ -1106,20 +1202,28 @@ class App:
                     "yolo_confidence",
                     0.50
                 )
-            )
+            ),
+            orient=HORIZONTAL,
+            length=200
         )
 
         yolo_conf.pack(
-            fill=X
+            side=LEFT,
+            fill=X,
+            expand=True,
+            padx=5
         )
 
         yolo_conf_value = ttk.Label(
-            auto,
-            text=f"{float(yolo_conf.get()):.2f}"
+            yolo_conf_frame,
+            text=f"{float(a.get('yolo_confidence', 0.50)):.2f}",
+            font=("Segoe UI", 10, "bold"),
+            bootstyle="primary",
+            width=5
         )
 
         yolo_conf_value.pack(
-            anchor=E
+            side=RIGHT
         )
 
         def update_yolo_value(_event=None):
@@ -1135,16 +1239,23 @@ class App:
         # MODELO YOLO
         # ---------------------------------------------------------
 
+        model_frame = ttk.Frame(yolo_frame)
+        model_frame.pack(
+            fill=X,
+            pady=(8, 0)
+        )
+
         ttk.Label(
-            auto,
-            text="Modelo YOLO:"
+            model_frame,
+            text="📦 Modelo YOLO:",
+            font=("Segoe UI", 9)
         ).pack(
-            anchor=W,
-            pady=(6, 2)
+            anchor=W
         )
 
         yolo_model = ttk.Entry(
-            auto
+            model_frame,
+            font=("Segoe UI", 10)
         )
 
         yolo_model.insert(
@@ -1156,7 +1267,18 @@ class App:
         )
 
         yolo_model.pack(
-            fill=X
+            fill=X,
+            pady=(3, 0)
+        )
+
+        ttk.Label(
+            model_frame,
+            text="💡 Ejemplos: yolo11n.pt, yolo11s.pt, yolo11m.pt",
+            font=("Segoe UI", 8, "italic"),
+            bootstyle="secondary"
+        ).pack(
+            anchor=W,
+            pady=(3, 0)
         )
 
         # ---------------------------------------------------------
@@ -1323,30 +1445,31 @@ class App:
 
         info = ttk.Labelframe(
             content,
-            text=" INFORMACIÓN ",
+            text=" ℹ️ INFORMACIÓN ",
             bootstyle="secondary",
-            padding=10
+            padding=15
         )
 
         info.pack(
             fill=X,
-            pady=6
+            pady=(15, 0)
         )
 
         ttk.Label(
             info,
             text=(
-                "La apertura automática puede utilizar las señales:\n\n"
-                "1. Persona frente a la puerta\n"
-                "2. Rostro reconocido\n"
-                "3. Seña autorizada\n\n"
-                "La lógica ANY permite que cualquiera de las señales "
-                "activadas autorice la apertura.\n\n"
-                "La lógica ALL requiere que todas las señales "
-                "activadas sean válidas."
+                "📌 La apertura automática puede utilizar las siguientes señales:\n\n"
+                "  1. 👤 Persona frente a la puerta (detección de presencia)\n"
+                "  2. 🙂 Rostro reconocido (comparación facial)\n"
+                "  3. ✋ Seña autorizada (gesto con la mano)\n\n"
+                "⚙ Lógica de activación:\n"
+                "  • ANY = cualquiera de las señales activadas puede abrir la puerta.\n"
+                "  • ALL = todas las señales activadas deben cumplirse simultáneamente.\n\n"
+                "💡 Consejo: Configure tiempos de cooldown adecuados para evitar aperturas no deseadas."
             ),
             justify=LEFT,
-            wraplength=650
+            wraplength=700,
+            font=("Segoe UI", 9)
         ).pack(
             fill=X
         )
@@ -1361,17 +1484,17 @@ class App:
 
         buttons.pack(
             fill=X,
-            pady=12
+            pady=(20, 10)
         )
 
         ttk.Button(
             buttons,
-            text="CANCELAR",
-            bootstyle="secondary",
+            text="❌ CANCELAR",
+            bootstyle="secondary-outline",
             command=win.destroy
         ).pack(
             side=RIGHT,
-            padx=5
+            padx=8
         )
 
         def save():
@@ -1451,7 +1574,7 @@ class App:
 
                 self.cfg["automation"].update({
 
-                    "logic": logic.get(),
+                    "logic": "ANY" if "ANY" in logic.get() else "ALL",
 
                     "standing_seconds": float(
                         standing.get()
@@ -1465,7 +1588,7 @@ class App:
                         face_threshold.get()
                     ),
 
-                    "gesture": gesture.get(),
+                    "gesture": gesture.get().split(" - ")[0] if " - " in gesture.get() else gesture.get(),
 
                     "yolo_model": (
                         yolo_model.get().strip()
